@@ -1,0 +1,70 @@
+main:
+    params: [input]
+    steps:
+        - init:
+            assign:
+            - bucket: "imdb_workflow_demo"
+            - archive_bucket: "processed-bucket"
+            - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+            - dataset_id: "gdg_demo"
+            - create_disposition: "CREATE_IF_NEEDED"
+            - write_disposition: "WRITE_TRUNCATE"
+        - readItem:
+            call: googleapis.storage.v1.objects.list
+            args:
+                bucket: ${bucket}
+                maxResults: 10
+            result: blobs
+        - readBlobs:
+            for:
+                value: v
+                in: ${blobs["items"]}
+                steps:
+                    - assignVariables: 
+                        assign:
+                        - blob_name: ${v["name"]}
+                    - parallelFlow:
+                        parallel:
+                            shared: [blob_name]
+                            branches:
+                                - uploadBQBranch:
+                                    steps:
+                                        - uploadBQ:
+                                            call: googleapis.bigquery.v2.jobs.insert
+                                            args:
+                                                projectId: ${project_id}
+                                                body:
+                                                    configuration:
+                                                        load:
+                                                            autodetect: true
+                                                            destinationTable:
+                                                                datasetId: ${dataset_id}
+                                                                projectId: ${project_id}
+                                                                tableId: ${text.split(blob_name,".")[0]}
+                                                            fieldDelimiter: ","
+                                                            skipLeadingRows: 1
+                                                            sourceFormat: "csv"
+                                                            sourceUris: ${"gs://"+bucket+"/"+blob_name}
+                                                            create_disposition: ${create_disposition}
+                                                            write_disposition: ${write_disposition}
+                                                            allowLargeResults: true
+                                                            useLegacySql: false
+                                        - logBQ:
+                                            call: sys.log
+                                            args:
+                                                text: ${blob_name+" has been written to BQ"}
+                                                severity: INFO
+                                - archiveBranch:
+                                    steps:
+                                        - archiveBlob:
+                                            call: googleapis.storage.v1.objects.copy
+                                            args:
+                                                destinationBucket: ${archive_bucket}
+                                                sourceBucket: ${bucket}
+                                                sourceObject: ${blob_name}
+                                                destinationObject: ${blob_name}
+                                        - logGCS:
+                                            call: sys.log
+                                            args:
+                                                text: ${blob_name+" has been copied to archive bucket"}
+                                                severity: INFO
