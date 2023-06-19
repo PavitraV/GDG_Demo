@@ -1,0 +1,47 @@
+main:
+    params: [event]
+    steps:
+        - init:
+            assign:
+            - project_id: ${sys.get_env("GOOGLE_CLOUD_PROJECT_ID")}
+            - dataset_id: "gdg_demo"
+            - table_id: ${text.split(event.data.name,".")[0]}
+            - create_disposition: "CREATE_IF_NEEDED"  # create a new one if table doesn't exist
+            - write_disposition: "WRITE_TRUNCATE"  # truncate it if the table already exists
+        - createDataset:
+            try:
+                call: googleapis.bigquery.v2.datasets.insert
+                args:
+                    projectId: ${project_id}
+                    body:
+                        datasetReference:
+                            datasetId: ${dataset_id}
+                            projectId: ${project_id}
+                            access[].role: "roles/bigquery.dataOwner"
+            except:
+                as: e
+                steps:
+                    - alreadyExists:
+                        next: loadData
+        - loadData:
+            call: googleapis.bigquery.v2.jobs.insert
+            args:
+                projectId: ${project_id}
+                body:
+                    configuration:
+                        load:
+                            autodetect: true
+                            destinationTable:
+                                datasetId: ${dataset_id}
+                                projectId: ${project_id}
+                                tableId: ${table_id}
+                            fieldDelimiter: ","
+                            skipLeadingRows: 1
+                            sourceFormat: "csv"
+                            sourceUris: ${"gs://"+event.bucket+"/"+event.data.name}
+                            create_disposition: ${create_disposition}
+                            write_disposition: ${write_disposition}
+                            allowLargeResults: true
+                            useLegacySql: false
+        - the_end:
+            return: ${event}
