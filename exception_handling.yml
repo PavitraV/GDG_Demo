@@ -8,6 +8,7 @@ main:
             - table_id: ${text.split(event.data.name,".")[0]}
             - create_disposition: "CREATE_IF_NEEDED"  # create a new one if table doesn't exist
             - write_disposition: "WRITE_TRUNCATE"  # truncate it if the table already exists
+            - quarantine_bucket: "gdg-quarantine-bucket"
         - createDataset:
             try:
                 call: googleapis.bigquery.v2.datasets.insert
@@ -24,24 +25,40 @@ main:
                     - alreadyExists:
                         next: loadData
         - loadData:
-            call: googleapis.bigquery.v2.jobs.insert
-            args:
-                projectId: ${project_id}
-                body:
-                    configuration:
-                        load:
-                            autodetect: true
-                            destinationTable:
-                                datasetId: ${dataset_id}
-                                projectId: ${project_id}
-                                tableId: ${table_id}
-                            fieldDelimiter: ","
-                            skipLeadingRows: 1
-                            sourceFormat: "csv"
-                            sourceUris: ${"gs://"+event.bucket+"/"+event.data.name}
-                            create_disposition: ${create_disposition}
-                            write_disposition: ${write_disposition}
-                            allowLargeResults: true
-                            useLegacySql: false
+            try:
+                call: googleapis.bigquery.v2.jobs.insert
+                args:
+                    projectId: ${project_id}
+                    body:
+                        configuration:
+                            load:
+                                autodetect: true
+                                destinationTable:
+                                    datasetId: ${dataset_id}
+                                    projectId: ${project_id}
+                                    tableId: ${table_id}
+                                fieldDelimiter: ","
+                                skipLeadingRows: 1
+                                sourceFormat: "csv"
+                                sourceUris: ${"gs://"+event.bucket+"/"+event.data.name}
+                                create_disposition: ${create_disposition}
+                                write_disposition: ${write_disposition}
+                                allowLargeResults: true
+                                useLegacySql: false
+            except:
+                as: e
+                steps:
+                    - quarantineBlob:
+                        call: googleapis.storage.v1.objects.copy
+                        args:
+                            destinationBucket: ${quarantine_bucket}
+                            sourceBucket: ${event.bucket}
+                            sourceObject: ${event.data.name}
+                            destinationObject: ${event.data.name}
+                    - logQuarantine:
+                        call: sys.log
+                        args:
+                            text: ${event.data.name+" has been quarantined"}
+                            severity: INFO
         - the_end:
-            return: ${event}
+                    return: ${event}
