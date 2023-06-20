@@ -1,0 +1,22 @@
+main:
+    params: [input]
+    steps:
+        - init:
+            assign:
+            - bucket: "imdb_workflow_demo"
+        - readItem:
+            call: googleapis.storage.v1.objects.list
+            args:
+                bucket: ${bucket}
+                maxResults: 10
+            result: blobs
+        - readBlobs:
+            for:
+                value: v
+                in: ${blobs["items"]}
+                steps:
+                    - printBlob:
+                        call: sys.log
+                        args:
+                            text: ${v["name"]+" is the blob name"}  
+                            severity: INFO 
